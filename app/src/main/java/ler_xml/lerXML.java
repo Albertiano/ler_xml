@@ -1,175 +1,151 @@
 package ler_xml;
 
 import java.awt.Desktop;
-import java.io.BufferedReader;    
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.FilenameFilter;
-import java.io.IOException;    
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.StringReader;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
-import java.util.Locale.Category;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
-import javax.xml.namespace.QName;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
-import javax.xml.transform.stream.StreamSource;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import org.xml.sax.SAXException;   
-    
-public class lerXML {    
+import org.xml.sax.SAXException;
 
-    /**
-     * @param args the command line arguments
-     */
+public class lerXML {
+
     public static void main(String[] args) {
         new lerXML().lerNota();
     }
-    
-    private String setLength(String s, int l) {  
-    if (s == null)  
-        s = new String();  
-  
-    if (s.length() == l) {  
-        return s;  
-    } else if (s.length() < l) {  
-        char[] esp = new char[l - s.length()];  
-        Arrays.fill(esp, ' ');  
-        return s.concat(String.valueOf(esp));  
-    } else {  
-        return s.substring(0, l);  
-    }  
-}
-    
-    
-    public void lerNota(){
-    	double CFOP5401Qtd=0;
-    	double CFOP5904Qtd=0;
-    	double CFOP5116 = 0;
-    	double CFOPOutros = 0;
-    	double faturamento = 0;
-    	
-    	FilenameFilter filtro = new FilenameFilter() {
-    	    public boolean accept(File dir, String name) {  
-    	        return name.endsWith("25230702930074000152550010000991761547198790.xml");   
-    	    }  
-    	};  
-        String local = "C:\\Users\\Albertiano\\Desktop\\NF-e\\2023-07NFe";
-    	File arquivos = new File(local);  
-    	String[] nomeArquivos = arquivos.list(filtro);  
-    	StringBuilder sb = new StringBuilder();
-        try {
-            for (String nomeArquivo : nomeArquivos) {	
-            String filePath = local + "/" + nomeArquivo;
-    
-            Reader fileReader = new FileReader(filePath);
 
-            XMLInputFactory inputFactory = XMLInputFactory.newInstance();
-            XMLStreamReader reader = null;
-            try {
-                reader = inputFactory.createXMLStreamReader(fileReader);
-                readDocument(reader);
-            } finally {
-                if (reader != null) {
-                    reader.close();
-                }
-            } 		
+    public void lerNota() {
+        FilenameFilter filtro = new FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return name.endsWith(".xml");
+            }
+        };
+        String local = "C:\\Users\\Albertiano\\Desktop\\NF-e\\2023-09NFe";
+        File arquivos = new File(local);
+        String[] nomeArquivos = arquivos.list(filtro);
+        List<String> filesName = Arrays.asList(nomeArquivos);
+        List<NotaFiscal> notas = new ArrayList<NotaFiscal>();
+        filesName.stream().forEach(xml -> addFileToList(local.concat("/").concat(xml), notas));
+        StringBuilder sb = new StringBuilder();
+        List<Item> items = new ArrayList<Item>();
+        notas.stream().forEach(n -> {
+            items.addAll(n.getItems());
+            sb.append(n);
+            sb.append("\r\n");
+        });
+
+        Collection<List<Item>> results = items.stream()
+                .collect(Collectors.groupingBy(i -> i.cfop))
+                .values();
+
+        results.forEach(c -> {
+            BigDecimal sum = c.stream()
+                    .map(x -> x.getQuantidade())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            sb.append("\r\n");
+            sb.append("CFOP: ");
+            sb.append(c.get(0).getCfop());
+            sb.append(" = ");
+            sb.append(sum);
+            sb.append("\r\n");
+            System.out.println(sb);
+        });
+
+        try {
+            Files.write(Paths.get(local + "/Resultado.txt"), sb.toString().getBytes("UTF-8"));
+            Desktop desktop = Desktop.getDesktop();
+            desktop.open(new File(local + "/Resultado.txt"));
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+
+        System.out.println(filesName.size());
+        System.out.println(notas.size());
+        System.out.println(filesName.size() == notas.size());
     }
-        } catch (Exception e) {
+
+    private void addFileToList(String filePath, List<NotaFiscal> notas) {
+        NotaFiscal nota = new NotaFiscal();
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder builder;
+        try {
+            builder = factory.newDocumentBuilder();
+            Document document = builder.parse(new File(filePath));
+            var nodeIDE = document.getDocumentElement().getElementsByTagName("ide").item(0);
+            var nodeDET = document.getDocumentElement().getElementsByTagName("det");
+            nota = readIDE(nodeIDE, nota);
+            for (int i = 0; i < nodeDET.getLength(); i++) {
+                NodeList nodes = nodeDET.item(i).getChildNodes();
+                for (int iDET = 0; iDET < nodes.getLength(); iDET++) {
+                    Node node = nodes.item(iDET);
+                    if (node.getNodeName() == "prod")
+                        nota = readDET(node, nota);
+                }
+            }
+            notas.add(nota);
+        } catch (ParserConfigurationException | SAXException | IOException e) {
             e.printStackTrace();
         }
-    }   
-
-    private NotaFiscal readDocument(XMLStreamReader reader) throws XMLStreamException {
-        NotaFiscal nota = new NotaFiscal();
-        while (reader.hasNext()) {            
-            int eventType = reader.next();
-            switch (eventType) {
-                case XMLStreamReader.START_ELEMENT:
-                    String elementName = reader.getLocalName();
-                    if (elementName.equals("ide"))
-                        nota  = readDET(reader, nota);
-                    else if (elementName.equals("det")){
-                        nota  = readIDE(reader, nota);
-                    } else 
-                        System.out.println(elementName);
-                    break;
-                case XMLStreamReader.END_ELEMENT:
-                    //System.out.println(nota);
-                    return nota;
-            }
-        }
-        throw new XMLStreamException("Premature end of file");
-    }
- 
-    private NotaFiscal readIDE(XMLStreamReader reader, NotaFiscal nota) throws XMLStreamException {
-        while (reader.hasNext()) {
-            int eventType = reader.next();
-            switch (eventType) {
-                case XMLStreamReader.START_ELEMENT:
-                    String elementName = reader.getLocalName();
-                    String elementValue = readCharacters(reader);
-                    if (elementName.equals("nNF")){
-                        nota.setNumero(Integer.valueOf(elementValue));
-                    } 
-                    break;
-                case XMLStreamReader.END_ELEMENT:
-                    return nota;
-            }
-        }
-        throw new XMLStreamException("Premature end of file");
     }
 
-    private NotaFiscal readDET(XMLStreamReader reader, NotaFiscal nota) throws XMLStreamException {
-        while (reader.hasNext()) {
-            int eventType = reader.next();
-            switch (eventType) {
-                case XMLStreamReader.START_ELEMENT:
-                    String elementName = reader.getLocalName();
-                    String elementValue = readCharacters(reader);
-                    System.out.println(elementName);
-                    System.out.println(elementValue);
+    private NotaFiscal readIDE(Node nodeIDE, NotaFiscal nota) {
+        NodeList nodeList = nodeIDE.getChildNodes();
+        for (int i = 0; i < nodeList.getLength(); i++) {
+            Node node = nodeList.item(i);
+            switch (node.getNodeType()) {
+                case Node.ELEMENT_NODE:
+                    Element elem = (Element) node;
+                    if (elem.getTagName() == "nNF")
+                        nota.setNumero(Integer.valueOf(elem.getTextContent()));
+                    if (elem.getTagName() == "dhEmi")
+                        nota.setDate(elem.getTextContent());
+                    break;
+                default:
+                    System.out.println("readIDE" + node);
+            }
+        }
+        return nota;
+    }
 
+    private NotaFiscal readDET(Node nodeDET, NotaFiscal nota) {
+        NodeList nodeList = nodeDET.getChildNodes();
+        Item item = new Item();
+        for (int i = 0; i < nodeList.getLength(); i++) {
+            Node node = nodeList.item(i);
+            switch (node.getNodeType()) {
+                case Node.ELEMENT_NODE:
+                    Element elem = (Element) node;
+                    if (elem.getTagName() == "CFOP")
+                        item.setCfop(elem.getTextContent());
+                    if (elem.getTagName() == "xProd")
+                        item.setDescProduto(elem.getTextContent());
+                    if (elem.getTagName() == "qCom")
+                        item.setQuantidade(new BigDecimal(elem.getTextContent()));
+                    if (elem.getTagName() == "vUnCom")
+                        item.setPreco(new BigDecimal(elem.getTextContent()));
+                    if (elem.getTagName() == "vProd")
+                        item.setSubtotal(new BigDecimal(elem.getTextContent()));
                     break;
-                case XMLStreamReader.END_ELEMENT:
-                    return nota;
+                default:
+                    System.out.println("readDET" + node);
             }
         }
-        throw new XMLStreamException("Premature end of file");
+        nota.getItems().add(item);
+        return nota;
     }
-     
-    private String readCharacters(XMLStreamReader reader) throws XMLStreamException {
-        StringBuilder result = new StringBuilder();
-        while (reader.hasNext()) {
-            int eventType = reader.next();
-            switch (eventType) {
-                case XMLStreamReader.CHARACTERS:
-                case XMLStreamReader.CDATA:
-                    result.append(reader.getText());
-                    break;
-                case XMLStreamReader.END_ELEMENT:
-                    return result.toString();
-            }
-        }
-        throw new XMLStreamException("Premature end of file");
-    }
-} 
+}
